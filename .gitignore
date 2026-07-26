@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+.Python
+venv/
+build/
+env/
+ENV/
+
+
+# Data files
+data/
+*.csv
+*.xlsx
+*.db
+*.sqlite
+*.xls
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ML
+*.pkl
+*.joblib
+
+# Fichiers système
+.DS_Store
+Thumbs.db
+ 
+# Fichiers temporaires
+*.tmp
+*.log
