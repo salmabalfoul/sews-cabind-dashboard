@@ -179,23 +179,77 @@ def predire_depuis_modele(
         "recommandation":          recommandation,
     }
 
-
 # ─────────────────────────────────────────────────────────
-# CHARGEMENT DONNÉES
+# CHARGEMENT DONNÉES (AVEC DONNÉES DÉMO POUR STREAMLIT CLOUD)
 # ─────────────────────────────────────────────────────────
 @st.cache_data(ttl=60)
 def charger_reel():
-    if not os.path.exists(DB_REEL):
-        return {}
-    engine = create_engine(f"sqlite:///{DB_REEL}", echo=False)
-    tables = {}
-    for nom in ["employes","retards","affectations","temps_standards",
-                "suivi_coupe","ordres_komax","manhours_2025","anomalies_pmsa"]:
+    """Charge les données depuis SQLite ou utilise des données de démonstration"""
+    import pandas as pd
+    import os
+    
+    # Si la base existe sur le PC local, la charger
+    if os.path.exists(DB_REEL):
         try:
-            tables[nom] = pd.read_sql(text(f"SELECT * FROM [{nom}]"), engine)
+            engine = create_engine(f"sqlite:///{DB_REEL}", echo=False)
+            tables = {}
+            for nom in ["employes","retards","affectations","temps_standards",
+                        "suivi_coupe","ordres_komax","manhours_2025","anomalies_pmsa"]:
+                try:
+                    tables[nom] = pd.read_sql(text(f"SELECT * FROM [{nom}]"), engine)
+                except:
+                    tables[nom] = pd.DataFrame()
+            return tables
         except:
-            tables[nom] = pd.DataFrame()
-    return tables
+            pass
+    
+    # Données de démonstration (pour Streamlit Cloud)
+    demo_data = {
+        "employes": pd.DataFrame({
+            "nom_prenom": ["Opérateur 1", "Opérateur 2", "Opérateur 3", "Opérateur 4"],
+            "matricule": ["001", "002", "003", "004"],
+            "zone": ["COFANO", "CABINA", "Engine", "BRIGLIA UREA"]
+        }),
+        "retards": pd.DataFrame({
+            "nom_prenom": ["Opérateur 1", "Opérateur 2"],
+            "nb_jours_retard": [2, 0]
+        }),
+        "affectations": pd.DataFrame({
+            "nom_prenom": ["Opérateur 1", "Opérateur 2"],
+            "zone": ["COFANO", "CABINA"],
+            "reference_spn": ["SPN001", "SPN002"]
+        }),
+        "temps_standards": pd.DataFrame({
+            "famille": ["COFANO", "CABINA", "ENGINE", "BRIGLIA UREA"],
+            "tps_proto_h": [5.76, 2.34, 1.06, 1.43]
+        }),
+        "suivi_coupe": pd.DataFrame({
+            "famille": ["Cabina", "Briglia", "COFANO", "COFANO"],
+            "reference": ["Pr5803561063", "Pr5803607573", "PR5803621787", "PR5803621806"],
+            "coupe": [122, 45, 218, 0],
+            "reste": [26, 22, 269, 486],
+            "pct_coupe": [82.4, 67.2, 44.8, 0.0]
+        }),
+        "ordres_komax": pd.DataFrame({
+            "Description": ["COFANO", "CABINA", "BRIGLIA UREA"],
+            "est_termine": [1, 1, 0],
+            "est_locked": [0, 1, 1]
+        }),
+        "manhours_2025": pd.DataFrame({
+            "sous_projet": ["COFANO", "CABINA", "Engine"],
+            "quantite": [40, 54, 357],
+            "manhours": [196.8, 124.2, 428.4],
+            "tps_proto_h": [5.76, 2.34, 1.06]
+        }),
+        "anomalies_pmsa": pd.DataFrame({
+            "numero": [1, 2, 3, 4, 5, 6, 7, 8],
+            "statut": ["Request"] * 8,
+            "drawing": ["5803203185"] * 8,
+            "jours_attente": [30, 25, 20, 15, 10, 8, 5, 3]
+        })
+    }
+    
+    return demo_data
 
 
 @st.cache_data(ttl=60)
@@ -229,7 +283,6 @@ def preparer_operateurs(tables):
     df["nb_jours_retard"] = df["nb_jours_retard"].astype(int)
     df["zone"] = df["zone"].fillna("Non affecté")
     return df
-
 
 # ─────────────────────────────────────────────────────────
 # EN-TÊTE
