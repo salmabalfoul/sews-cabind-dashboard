@@ -22,6 +22,11 @@ data/
 *.sqlite
 *.xls
 
+# Exception : données synthétiques (non confidentielles) nécessaires
+# à l'onglet "Comparaison" sur Streamlit Cloud
+!data/
+!data/sews_production.db
+
 # IDE
 .vscode/
 .idea/
