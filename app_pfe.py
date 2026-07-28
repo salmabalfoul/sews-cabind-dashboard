@@ -1134,11 +1134,18 @@ def main():
     afficher_entete()
     afficher_sidebar()
 
-    if not os.path.exists(DB_REEL):
-        st.error("Base de données non trouvée. Lance : python etl_reel.py")
-        return
-
     tables = charger_reel()
+
+    if st.session_state.get("mode_demo"):
+        st.info(
+            "ℹ️ **Mode démonstration** — Base de données réelle non disponible sur ce "
+            "déploiement. Les données affichées sont des données de démonstration "
+            "basées sur les vraies données SEWS Cabind (anonymisées)."
+        )
+
+    if not tables or all(df.empty for df in tables.values()):
+        st.error("Aucune donnée disponible (ni base réelle, ni données de démonstration).")
+        return
 
     tab1,tab2,tab3,tab4 = st.tabs([
         "📊 Données Réelles SEWS",

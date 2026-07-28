@@ -192,8 +192,26 @@ def forcer_mise_a_jour():
 # ─────────────────────────────────────────────────────────
 @st.cache_data(ttl=30)
 def charger_tout():
+    """
+    Mode LOCAL  : lit depuis sews_reel.db
+    Mode CLOUD  : utilise data_loader.py avec données de démo
+    """
+    try:
+        from data_loader import charger_tables
+        tables, est_demo = charger_tables()
+        st.session_state["mode_demo"] = est_demo
+        return tables
+    except Exception:
+        pass
+
+    # Fallback : lecture directe SQLite
     if not os.path.exists(DB_PATH):
-        return {}
+        st.session_state["mode_demo"] = True
+        try:
+            from data_loader import charger_donnees_demo
+            return charger_donnees_demo()
+        except Exception:
+            return {}
     engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
     tables = {}
     for nom in ["employes","retards","affectations","temps_standards",
@@ -202,6 +220,7 @@ def charger_tout():
             tables[nom] = pd.read_sql(text(f"SELECT * FROM [{nom}]"), engine)
         except:
             tables[nom] = pd.DataFrame()
+    st.session_state["mode_demo"] = False
     return tables
 
 
@@ -841,8 +860,15 @@ def main():
     tables = charger_tout()
     afficher_sidebar(tables)
 
-    if not os.path.exists(DB_PATH):
-        st.error("Base de données introuvable. Lance : python etl_reel.py")
+    if st.session_state.get("mode_demo"):
+        st.info(
+            "ℹ️ **Mode démonstration** — Base de données réelle non disponible sur ce "
+            "déploiement. Les données affichées sont des données de démonstration "
+            "basées sur les vraies données SEWS Cabind (anonymisées)."
+        )
+
+    if not tables or all(df.empty for df in tables.values()):
+        st.error("Aucune donnée disponible (ni base réelle, ni données de démonstration).")
         return
 
     tab1,tab2,tab3,tab4 = st.tabs([
