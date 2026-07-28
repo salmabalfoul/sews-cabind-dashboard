@@ -1,224 +1,271 @@
 """
-data_loader.py — Chargement intelligent des données
-Fonctionne dans les 2 modes :
-  - LOCAL    : lit depuis sews_reel.db (données réelles)
-  - CLOUD    : utilise des données de démonstration intégrées
-               (quand la DB n'est pas disponible sur Streamlit Cloud)
+data_loader.py — Charge les données pour Streamlit Cloud
+Fonctionne avec ou sans base SQLite (fallback sur données démo)
+
+Mode LOCAL  : lit depuis sews_reel.db (données réelles)
+Mode CLOUD  : utilise les données de démonstration intégrées
 """
 
 import pandas as pd
-import numpy as np
+import sqlite3
 import os
-from datetime import datetime
 
 DB_PATH = os.path.join("data", "sews_reel.db")
 
-
-def mode_cloud():
-    """Retourne True si on est sur Streamlit Cloud sans base de données."""
-    return not os.path.exists(DB_PATH)
-
+# ============================================================
+# DONNÉES DE DÉMONSTRATION (pour Streamlit Cloud)
+# Basées sur les vraies données SEWS Cabind (anonymisées)
+# ============================================================
 
 def charger_donnees_demo():
     """
-    Données de démonstration intégrées pour Streamlit Cloud.
-    Basées sur les vraies données SEWS Cabind (anonymisées).
+    Retourne des données de démonstration réalistes basées sur SEWS Cabind.
+    Ces données sont utilisées quand la base SQLite n'est pas disponible.
     """
-    np.random.seed(42)
-
-    # ── Opérateurs (vrais prénoms anonymisés) ────────────
-    employes_data = {
+    
+    # ── 33 EMPLOYÉS AVEC LEURS ZONES ──
+    employes = pd.DataFrame({
         "nom_prenom": [
-            "Ouala Z.","Idrissi B.","Saadeddine A.","Mana S.",
-            "Louz M.","Zaroug F.","Elatmani N.","Erradah",
-            "Gheffoub H.","Sour B.","Zaroual F.","Aniba N.",
-            "Akourmach A.","Fatine B.","Soukaina I.","Hiba",
-            "Jaoudallah N.","Mouna Z.","Yadri M.","Hmidchat A.",
-            "Oumni S.","Alif L.","Babali K.","Hiklef S.",
-            "Kenza E.","Badrezzamane H.","Hayat","Sougni F.",
-            "Ouizrane S.","Abdellah K.","Said F.",
-            "Majdoub N.","Marwa E."
+            "Ouala Z.", "Idrissi Bouchra", "Saadine Aziza", "Mana S.",
+            "Fatine Bouabdely", "Amina Akourach", "Hasna Gheffoub",
+            "Babali K.", "Hiba", "Najat Jaoudallah", "Mouna Zair",
+            "Malika Yadri", "Kenza Elwardi", "Aicha Hmidchat",
+            "Saadia Oumni", "Alif L.", "Kabbab Abdellah",
+            "Said Farache", "Sanaa Hiklef", "Hanane Badrezzamane",
+            "Hayat", "Fatimzahra Sougni", "Bouchra Sour",
+            "Samira Ouizrane", "Mouna Louz", "Erradah R.",
+            "Fatiha Zaroual", "Soukaina Ihikin", "Fatiha Zaroug",
+            "Nadia Elatmani", "Oumnia Saadia", "Zair Mouna", "Majdoub N."
         ],
-        "matricule": [f"M{str(i).zfill(3)}" for i in range(1, 34)],
-        "id_employe": list(range(1, 34)),
-    }
-
-    retards_data = {
-        "nom_prenom": [
-            "Hayat","Hiba","Yadri M.","Sour B.",
-            "Zaroual F.","Fatine B.","Elatmani N.",
-            "Mana S.","Kenza E.","Oumni S.",
-            "Hiklef S.","Zaroug F."
-        ],
-        "nb_jours_retard": [33, 10, 8, 4, 4, 2, 2, 1, 1, 1, 1, 1],
-    }
-
-    affectations_data = {
-        "nom_prenom": [
-            "Ouala Z.","Idrissi B.","Saadeddine A.","Mana S.",
-            "Louz M.","Zaroug F.","Elatmani N.","Erradah",
-            "Gheffoub H.","Sour B.","Zaroual F.","Aniba N.",
-            "Akourmach A.","Fatine B.","Soukaina I.","Hiba",
-            "Jaoudallah N.","Mouna Z.","Yadri M.","Hmidchat A.",
-            "Oumni S.","Alif L.","Babali K.","Hiklef S.",
-            "Kenza E.","Badrezzamane H.","Hayat","Sougni F.",
-            "Ouizrane S.","Abdellah K.","Said F.",
-            "Majdoub N.","Marwa E."
+        "matricule": [
+            4788, 4647, 5596, 5864, 25121, 3681, 4578, 5444, 4232,
+            4745, 4715, 4321, 25122, 3978, 4068, 5066, 14155, 91309,
+            4739, 6065, 8795, 5763, 4316, 3809, 4354, 4762, 4671,
+            25127, 4261, 4447, 4069, 4710, 5766
         ],
         "zone": [
-            "CABINA","CABINA","Engine","Engine",
-            "BRIGLIA UREA","COFANO","COFANO","COFANO",
-            "COFANO","COFANO","COFANO","COFANO",
-            "COFANO","COFANO","COFANO NDE",
-            "CONTRÔLE ELECTRIQUE+PIN TO PIN",
-            "CONTRÔLE ELECTRIQUE+PIN TO PIN",
-            "CONTRÔLE ELECTRIQUE+PIN TO PIN",
-            "CONTRÔLE FINAL","PREMONTAGE",
-            "PREMONTAGE","PREMONTAGE","PREMONTAGE",
-            "PREPARATION GAINE","épissurage",
-            "SERTISSAGE +épissurage","SERTISSAGE +épissurage",
-            "support PM","support PM",
-            "PREPARATION ET VALIDATION LES TABLES DE MONTAGE",
-            "PREPARATION ET VALIDATION LES TABLES DE MONTAGE",
-            "CABINA","Engine"
+            "CABINA", "CABINA", "Engine", "Engine", 
+            "COFANO", "COFANO", "COFANO", "COFANO", 
+            "CONTRÔLE ELECTRIQUE", "CONTRÔLE ELECTRIQUE", "CONTRÔLE ELECTRIQUE",
+            "CONTRÔLE FINAL", "épissurage", "PREMONTAGE",
+            "PREMONTAGE", "PREMONTAGE", "PREMONTAGE", 
+            "PREPARATION ET VALIDATION", "PREPARATION GAINE", 
+            "SERTISSAGE", "SERTISSAGE", "support PM",
+            "support PM", "COFANO", "BRIGLIA UREA", "COFANO", "COFANO",
+            "COFANO NDE", "COFANO", "COFANO", "PREMONTAGE", "CONTRÔLE ELECTRIQUE", "COFANO"
+        ]
+    })
+    
+    # ── RETARDS PAR EMPLOYÉ ──
+    retards = pd.DataFrame({
+        "nom_prenom": [
+            "Ouala Z.", "Idrissi Bouchra", "Saadine Aziza", "Mana S.",
+            "Fatine Bouabdely", "Amina Akourach", "Hasna Gheffoub",
+            "Babali K.", "Hiba", "Najat Jaoudallah", "Mouna Zair",
+            "Malika Yadri", "Kenza Elwardi", "Aicha Hmidchat",
+            "Saadia Oumni", "Alif L.", "Kabbab Abdellah",
+            "Said Farache", "Sanaa Hiklef", "Hanane Badrezzamane",
+            "Hayat", "Fatimzahra Sougni", "Bouchra Sour",
+            "Samira Ouizrane", "Mouna Louz", "Erradah R.",
+            "Fatiha Zaroual", "Soukaina Ihikin", "Fatiha Zaroug",
+            "Nadia Elatmani", "Oumnia Saadia", "Zair Mouna", "Majdoub N."
         ],
-        "tps_std_h": [
-            7.5,None,4.0,None,
-            2.0,15.0,None,None,
-            None,None,None,None,
-            None,None,None,
-            None,None,None,None,None,
-            None,None,None,None,None,
-            None,None,None,None,None,
-            None,None,None
+        "nb_jours_retard": [
+            0, 0, 0, 0, 2, 0, 0, 0, 10, 0, 0, 8, 1, 0, 1, 0,
+            0, 0, 1, 0, 33, 0, 4, 0, 1, 0, 4, 0, 1, 2, 0, 0, 0
+        ]
+    })
+    
+    # ── AFFECTATIONS DES OPÉRATEURS ──
+    affectations = pd.DataFrame({
+        "nom_prenom": [
+            "Ouala Z.", "Idrissi Bouchra", "Saadine Aziza", "Mana S.",
+            "Louz Mouna", "Fatiha Zaroug", "Nadia Elatmani",
+            "Erradah R.", "Hasna Gheffoub", "Bouchra Sour",
+            "Fatiha Zaroual", "Amina Akourach", "Fatine Bouabdely",
+            "Soukaina Ihikin", "Hiba", "Najat Jaoudallah",
+            "Mouna Zair", "Malika Yadri", "Aicha Hmidchat",
+            "Saadia Oumni", "Alif L.", "Babali K.",
+            "Sanaa Hiklef", "Kenza Elwardi", "Hanane Badrezzamane",
+            "Hayat", "Fatimzahra Sougni", "Samira Ouizrane",
+            "Kabbab Abdellah", "Said Farache"
+        ],
+        "zone": [
+            "CABINA", "CABINA", "Engine", "Engine", 
+            "BRIGLIA UREA", "COFANO", "COFANO", "COFANO", "COFANO", 
+            "COFANO", "COFANO", "COFANO", "COFANO", "COFANO NDE",
+            "CONTRÔLE ELECTRIQUE", "CONTRÔLE ELECTRIQUE", "CONTRÔLE ELECTRIQUE",
+            "CONTRÔLE FINAL", "PREMONTAGE", "PREMONTAGE", "PREMONTAGE", "PREMONTAGE",
+            "PREPARATION GAINE", "épissurage", "SERTISSAGE",
+            "SERTISSAGE", "support PM", "support PM",
+            "PREPARATION ET VALIDATION", "PREPARATION ET VALIDATION"
         ],
         "reference_spn": [
-            "P5803561063","P5803561063","P5803686850","P5803686850",
-            "P5803638879","P5803549592","P5803549592","P5803549456",
-            "P5803549456","P5803549427","P5803549427","P5803563982",
-            "P5803563982","P5803657384","P5803621787",
-            "ALL","ALL","ALL","ALL","ALL",
-            "ALL","ALL","ALL","ALL","ALL",
-            "ALL","ALL","ALL","ALL","ALL",
-            "ALL","P5803561063","P5803686850"
+            "P5803561063/88 00AA", "P5803561063/88 00AA",
+            "P5803686850 00AA", "P5803686850 00AA",
+            "P5803638879/82 00AA", "P5803549592 01AA",
+            "P5803549592 01AA", "P5803549456 02AA",
+            "P5803549456 02AA", "P5803549427 02AA",
+            "P5803549427 02AA", "P5803563982/56 01A1",
+            "P5803657384 00AA", "P5803621787 00A0", "ALL",
+            "ALL", "ALL", "ALL", "ALL", "ALL", "ALL", "ALL",
+            "ALL", "ALL", "ALL", "ALL", "ALL", "ALL", "ALL", "ALL"
+        ]
+    })
+    
+    # ── TEMPS STANDARDS PAR FAMILLE ──
+    temps_standards = pd.DataFrame({
+        "famille": ["COFANO", "CABINA", "ENGINE", "BRIGLIA UREA", "PDB",
+                   "TELAIO H", "TELAIO U", "Plafoniera", "APH"],
+        "tps_proto_h": [5.76, 2.34, 1.06, 1.43, 7.54, 4.84, 3.80, 1.35, 10.23],
+        "cadence_txt": [
+            "1pièce / 2jour", "1pièce / 1,5jour", "2pièce / jour",
+            "2pièce / jour", "1pièce / 2jour", "1pièce / 1,5jour",
+            "", "", "1pièce / 6jour"
+        ]
+    })
+    
+    # ── SUIVI DE LA COUPE ──
+    suivi_coupe = pd.DataFrame({
+        "famille": [
+            "Cabina Daily My2027", "Briglia UREA My2027",
+            "COFANO DAILY MY2027", "COFANO DAILY MY2027"
         ],
-        "qty_objectif": [26]*33,
-        "qty_reelle":   [26]*33,
-        "performance_pct": [100.0]*33,
-    }
-
-    # ── Temps standards ──────────────────────────────────
-    temps_standards_data = {
-        "famille":         ["COFANO","CABINA","PDB","TELAIO H","TELAIO U",
-                            "Plafoniera","APH","Engine","BRIGLIA UREA"],
-        "tps_proto_h":     [5.76, 2.34, 7.54, 4.84, 3.80, 1.35, 10.23, 1.06, 1.43],
-        "tps_coupe_h":     [1.50, 0.80, 2.00, 1.20, 1.00, 0.40,  3.00, 0.30, 0.50],
-        "tps_sans_coupe_h":[4.26, 1.54, 5.54, 3.64, 2.80, 0.95,  7.23, 0.76, 0.93],
-        "cadence_1op":     [0.5,  0.67, 0.5,  0.67, None, None,  0.17,  2.0,  2.0],
-        "cadence_txt":     ["1pièce / 2jour","1pièce / 1,5jour",
-                            "1pièce / 2jour","1pièce / 1,5jour",
-                            "","","1pièce / 6jour",
-                            "2pièce / jour","2pièce / jour"],
-    }
-
-    # ── Suivi coupe WK24 ─────────────────────────────────
-    suivi_coupe_data = {
-        "famille":          ["Cabina Daily My2027","Briglia UREA My2027",
-                             "COFANO DAILY MY2027","COFANO DAILY MY2027"],
-        "reference":        ["Pr5803561063 00AA","Pr5803607573 00AA",
-                             "PR5803621787 02BB","PR5803621806 00A1"],
-        "quantite":         [4, 4, 7, 2],
-        "nb_reperes":       [148, 67, 487, 486],
-        "coupe":            [122, 45, 218, 0],
-        "reste":            [26, 22, 269, 486],
-        "pct_coupe":        [82.43, 67.16, 44.76, 0.0],
-        "date_demande":     ["11/06/2026"]*4,
-        "date_reponse_prev":["13/07/2026","13/07/2026","20/07/2026","20/07/2026"],
-        "indice_lancement": ["caprow27","brprow27","CF26PROTO","?????"],
-    }
-
-    # ── Manhours 2025 ────────────────────────────────────
-    mois_list = ["Janvier","Fevrier","Mars","Avril","Mai","Juin",
-                 "Juillet","Aout","Septembre","Octobre"]
-    projets_mh = [
-        ("DAILY","Cofano My",        15.0, 5.8),
-        ("DAILY","Briglia  Urea",     2.0, 1.5),
-        ("DAILY","Cabina My",         7.5, 2.3),
-        ("STRALIS","Engine",          4.0, 1.2),
-        ("STRALIS","MOTORE STRALIS",  4.0, 1.2),
-        ("DAILY","Dashboard",        18.0, 8.0),
-        ("DAILY","TELAIO DAILY2014",  5.0, 3.0),
-        ("DAILY","MEAN REAR",         6.0, 3.5),
-        ("STRALIS","PARAURTI STRALIS",3.0, 2.0),
-        ("DAILY","Telaio Stralis",    5.0, 3.5),
-    ]
-    mh_rows = []
-    np.random.seed(42)
-    for projet, sous_proj, tps_proto, tps_serie in projets_mh:
-        for m_idx, mois in enumerate(mois_list[:8]):
-            qte = np.random.randint(5, 30)
-            mh  = round(qte * tps_proto * np.random.uniform(0.85, 1.15), 1)
-            mh_rows.append({
-                "projet":sous_proj,"sous_projet":sous_proj,
-                "mois":mois,"mois_num":m_idx+1,"annee":2025,
-                "quantite":float(qte),"manhours":mh,
-                "tps_proto_h":tps_proto,"tps_serie_h":tps_serie,
-            })
-
-    # ── Anomalies PMSA ───────────────────────────────────
-    anomalies_data = {
-        "numero":       list(range(1, 9)),
-        "statut":       ["Request"]*8,
-        "drawing":      [f"5803203185_00_23AZ01{i}" for i in range(1,9)],
-        "index_client": ["IVECO"]*8,
-        "question":     [
-            "Position du connecteur C001 incorrecte selon plan",
-            "Longueur faisceau zone moteur trop courte de 15mm",
-            "Code couleur fil incorrect — zone tableau de bord",
-            "Sertissage terminal T45 non conforme force arrachement",
-            "Référence gaine protection moteur erronée",
-            "Clip fixation manquant zone châssis gauche",
-            "Marquage faisceau illisible après passage four",
-            "Connecteur C088 absent du plan assemblage",
+        "reference": [
+            "Pr5803561063 00AA", "Pr5803607573 00AA",
+            "PR5803621787 02BB", "PR5803621806 00A1"
         ],
-        "solution":     ["En attente réponse IVECO"]*8,
-        "jours_attente":[30, 28, 25, 22, 18, 15, 10, 7],
-    }
-
+        "nb_reperes": [148, 67, 487, 486],
+        "coupe": [122, 45, 218, 0],
+        "reste": [26, 22, 269, 486],
+        "pct_coupe": [82.4, 67.2, 44.8, 0.0],
+        "date_demande": [
+            "2025-06-02", "2025-06-02", "2025-06-02", "2025-06-02"
+        ],
+        "date_reponse_prev": [
+            "2025-06-09", "2025-06-09", "2025-06-09", "2025-06-09"
+        ],
+        "indice_lancement": ["LNC-001", "LNC-002", "LNC-003", "?????"]
+    })
+    
+    # ── ORDRES KOMAX ──
+    ordres_komax = pd.DataFrame({
+        "Description": ["COFANO", "CABINA", "BRIGLIA UREA", "COFANO GS"],
+        "est_termine": [1, 1, 0, 0],
+        "est_locked": [0, 1, 1, 0]
+    })
+    
+    # ── MANHOURS 2025 ──
+    manhours_2025 = pd.DataFrame({
+        "sous_projet": [
+            "MOTORE STRALIS", "Engine", "Cabina My", "COFANO",
+            "TELAIO DAILY2014", "Cofano My", "Dashboard",
+            "MEAN REAR", "PARAURTI STRALIS", "Briglia Urea",
+            "Telaio Stralis"
+        ],
+        "quantite": [45, 357, 54, 40, 85, 66, 112, 11, 90, 83, 5],
+        "manhours": [
+            90.0, 428.4, 124.2, 196.8, 130.1, 382.8, 840.0, 112.2, 99.0, 116.2, 24.0
+        ],
+        "tps_proto_h": [7.0, 1.2, 2.3, 4.9, 1.6, 5.8, 7.4, 10.2, 1.0, 1.4, 4.0]
+    })
+    
+    # ── ANOMALIES PMSA (8 anomalies) ──
+    anomalies_pmsa = pd.DataFrame({
+        "numero": [1, 2, 3, 4, 5, 6, 7, 8],
+        "statut": ["Request"] * 8,
+        "drawing": ["5803203185"] * 8,
+        "jours_attente": [30, 25, 20, 15, 10, 8, 5, 3],
+        "status": ["Request"] * 8
+    })
+    
     return {
-        "employes":       pd.DataFrame(employes_data),
-        "retards":        pd.DataFrame(retards_data),
-        "affectations":   pd.DataFrame(affectations_data),
-        "temps_standards":pd.DataFrame(temps_standards_data),
-        "suivi_coupe":    pd.DataFrame(suivi_coupe_data),
-        "ordres_komax":   pd.DataFrame({
-            "Description":["COFANO"]*477+["CABINA"]*148+
-                          ["BRIGLIA UREA"]*67+["COFANO GS"]*10,
-            "est_termine": [1]*385+[0]*317,
-            "est_locked":  [1]*251+[0]*451,
-            "GoodParts":   np.random.randint(0,50,702),
-        }),
-        "manhours_2025":  pd.DataFrame(mh_rows),
-        "anomalies_pmsa": pd.DataFrame(anomalies_data),
+        "employes": employes,
+        "retards": retards,
+        "affectations": affectations,
+        "temps_standards": temps_standards,
+        "suivi_coupe": suivi_coupe,
+        "ordres_komax": ordres_komax,
+        "manhours_2025": manhours_2025,
+        "anomalies_pmsa": anomalies_pmsa
     }
 
+
+# ============================================================
+# FONCTION PRINCIPALE DE CHARGEMENT
+# ============================================================
 
 def charger_tables():
     """
-    Charge les données depuis SQLite si disponible,
-    sinon utilise les données de démonstration.
-    Retourne (tables_dict, est_demo: bool)
+    Charge les données depuis SQLite si disponible, sinon utilise les données démo.
+    
+    Retourne :
+        tables (dict) : Dictionnaire des DataFrames
+        est_demo (bool) : True si données de démonstration, False si données réelles
     """
-    if mode_cloud():
-        return charger_donnees_demo(), True
-
-    from sqlalchemy import create_engine, text
-    engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
-    tables = {}
-    for nom in ["employes","retards","affectations","temps_standards",
-                "suivi_coupe","ordres_komax","manhours_2025","anomalies_pmsa"]:
+    
+    # Si la base SQLite existe, la charger
+    if os.path.exists(DB_PATH):
         try:
-            tables[nom] = pd.read_sql(text(f"SELECT * FROM [{nom}]"), engine)
-        except:
-            tables[nom] = pd.DataFrame()
-    return tables, False
+            conn = sqlite3.connect(DB_PATH)
+            tables = {}
+            
+            for nom in ["employes", "retards", "affectations", "temps_standards",
+                        "suivi_coupe", "ordres_komax", "manhours_2025", "anomalies_pmsa"]:
+                try:
+                    tables[nom] = pd.read_sql_query(f"SELECT * FROM {nom}", conn)
+                except:
+                    tables[nom] = pd.DataFrame()
+            
+            conn.close()
+            
+            # Vérifier que les données ne sont pas vides
+            if tables.get("employes", pd.DataFrame()).empty:
+                return charger_donnees_demo(), True
+            
+            return tables, False
+            
+        except Exception:
+            return charger_donnees_demo(), True
+    
+    # Si la base n'existe pas, utiliser les données démo
+    return charger_donnees_demo(), True
+
+
+# ============================================================
+# FONCTION D'EXPORT VERS SQLITE (pour usage local)
+# ============================================================
+
+def exporter_donnees_demo():
+    """
+    Exporte les données de démonstration vers SQLite.
+    Utile pour créer une base de départ sur le PC local.
+    """
+    tables, _ = charger_tables()
+    
+    conn = sqlite3.connect(DB_PATH)
+    for nom, df in tables.items():
+        df.to_sql(nom, conn, if_exists="replace", index=False)
+    conn.close()
+    
+    print(f"✅ Données de démonstration exportées vers {DB_PATH}")
+
+
+# ============================================================
+# POINT D'ENTRÉE (pour tester)
+# ============================================================
+
+if __name__ == "__main__":
+    print("=" * 55)
+    print("  data_loader.py — Test de chargement")
+    print("=" * 55)
+    
+    tables, est_demo = charger_tables()
+    
+    print(f"\n📊 Mode : {'DÉMONSTRATION' if est_demo else 'RÉEL'}")
+    print(f"📁 Tables chargées : {len(tables)}")
+    
+    for nom, df in tables.items():
+        print(f"  ✅ {nom:<20} : {len(df):>5} lignes")
+    
+    print("\n" + "=" * 55)
