@@ -210,7 +210,7 @@ def charger_reel():
     engine = create_engine(f"sqlite:///{DB_REEL}", echo=False)
     tables = {}
     for nom in ["employes","retards","affectations","temps_standards",
-                "suivi_coupe","ordres_komax","manhours_2025","anomalies_pmsa"]:
+                "suivi_coupe","ordres_komax","manhours_2025","anomalies_pmsa","performance_hebdo","performance_mensuelle"]:
         try:
             tables[nom] = pd.read_sql(text(f"SELECT * FROM [{nom}]"), engine)
         except:
@@ -379,6 +379,48 @@ def onglet_donnees_reelles(tables):
         c3.metric("🟠 Avec retards",    nb_ret)
         c4.metric("🔴 Bloqués",         nb_bloq)
         c5.metric("📨 Anomalies IVECO", nb_anom)
+
+# ── Ajout : détail individuel par opérateur (identique à app_encadrant.py) ──
+    # à coller dans l'onglet "Données Réelles SEWS" de app_pfe.py
+    st.markdown("---")
+    st.markdown("### 🎯 Performance individuelle par opérateur")
+
+    df_hebdo = tables.get("performance_hebdo", pd.DataFrame())
+    df_mens  = tables.get("performance_mensuelle", pd.DataFrame())
+
+    if df_hebdo.empty:
+        st.info("Détail hebdomadaire non disponible.")
+    else:
+        operateurs = sorted(df_hebdo["nom_prenom"].dropna().unique())
+        choix = st.selectbox("Opérateur", operateurs, key="select_op_perf_pfe")
+
+        df_op_semaine = df_hebdo[df_hebdo["nom_prenom"] == choix].sort_values("semaine")
+        perf_row = df_mens[df_mens["nom_prenom"] == choix]
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            val = perf_row["performance_mensuelle_pct"].iloc[0] if not perf_row.empty else None
+            st.metric("Performance mensuelle", f"{val:.1f}%" if pd.notna(val) else "N/A")
+        with c2:
+            st.metric("Total pièces produites", f"{df_op_semaine['qty_reelle'].sum():.0f}")
+        with c3:
+            st.metric("Jours travaillés", f"{df_op_semaine['jours_travailles'].sum():.0f}")
+
+        df_plot = df_op_semaine.dropna(subset=["qty_objectif","qty_reelle"], how="all")
+        if not df_plot.empty:
+            fig = px.bar(
+                df_plot, x="semaine", y=["qty_objectif","qty_reelle"],
+                barmode="group", title=f"Objectif vs Réel — {choix}",
+            )
+            fig.update_layout(height=300)
+            st.plotly_chart(fig, use_container_width=True)
+
+        st.dataframe(
+            df_op_semaine[["semaine","qty_objectif","qty_reelle","performance_pct",
+                   "jours_travailles","lundi","mardi","mercredi",
+                   "jeudi","vendredi","samedi","dimanche"]],
+            use_container_width=True, hide_index=True,
+        )
 
     st.markdown("---")
 

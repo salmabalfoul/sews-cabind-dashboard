@@ -185,6 +185,41 @@ def charger_donnees_demo():
         "jours_attente":[30, 28, 25, 22, 18, 15, 10, 7],
     }
 
+    # ── Performance individuelle (hebdo + mensuelle) ─────
+    np.random.seed(42)
+    JOURS = ["lundi","mardi","mercredi","jeudi","vendredi","samedi","dimanche"]
+    semaines_demo = ["WK13","WK14","WK15","WK16"]
+    perf_hebdo_rows = []
+    for nom, zone in zip(affectations_data["nom_prenom"], affectations_data["zone"]):
+        for semaine in semaines_demo:
+            if np.random.random() < 0.15:
+                continue  # certaines semaines non renseignées, comme dans les vraies données
+            qty_obj = np.random.randint(2, 8)
+            jours_val = [np.random.randint(0, 2) for _ in range(7)]
+            qty_reel = min(sum(jours_val) + np.random.randint(0, 2), qty_obj + np.random.randint(0, 3))
+            perf_hebdo_rows.append({
+                "nom_prenom": nom, "zone": zone, "semaine": semaine,
+                "qty_objectif": qty_obj, "qty_reelle": qty_reel,
+                "performance_pct": round(qty_reel/qty_obj*100, 1) if qty_obj else None,
+                "jours_travailles": sum(1 for j in jours_val if j > 0),
+                **{j: v for j, v in zip(JOURS, jours_val)},
+            })
+
+    df_ph = pd.DataFrame(perf_hebdo_rows)
+    if not df_ph.empty:
+        agg = df_ph.groupby(["nom_prenom","zone"]).agg(
+            qty_objectif_total=("qty_objectif","sum"),
+            qty_reelle_total=("qty_reelle","sum"),
+            jours_travailles_total=("jours_travailles","sum"),
+            nb_semaines=("semaine","nunique"),
+        ).reset_index()
+        agg["performance_mensuelle_pct"] = (
+            agg["qty_reelle_total"] / agg["qty_objectif_total"] * 100
+        ).round(1)
+        perf_mens_rows = agg.to_dict("records")
+    else:
+        perf_mens_rows = []
+
     return {
         "employes":       pd.DataFrame(employes_data),
         "retards":        pd.DataFrame(retards_data),
@@ -200,6 +235,8 @@ def charger_donnees_demo():
         }),
         "manhours_2025":  pd.DataFrame(mh_rows),
         "anomalies_pmsa": pd.DataFrame(anomalies_data),
+        "performance_hebdo":    pd.DataFrame(perf_hebdo_rows),
+        "performance_mensuelle":pd.DataFrame(perf_mens_rows),
     }
 
 
@@ -216,7 +253,8 @@ def charger_tables():
     engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
     tables = {}
     for nom in ["employes","retards","affectations","temps_standards",
-                "suivi_coupe","ordres_komax","manhours_2025","anomalies_pmsa"]:
+                "suivi_coupe","ordres_komax","manhours_2025","anomalies_pmsa",
+                "performance_hebdo","performance_mensuelle"]:
         try:
             tables[nom] = pd.read_sql(text(f"SELECT * FROM [{nom}]"), engine)
         except:

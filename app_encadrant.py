@@ -215,14 +215,14 @@ def charger_tout():
     engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
     tables = {}
     for nom in ["employes","retards","affectations","temps_standards",
-                "suivi_coupe","ordres_komax","manhours_2025","anomalies_pmsa"]:
+                "suivi_coupe","ordres_komax","manhours_2025","anomalies_pmsa",
+                "performance_hebdo","performance_mensuelle"]:
         try:
             tables[nom] = pd.read_sql(text(f"SELECT * FROM [{nom}]"), engine)
         except:
             tables[nom] = pd.DataFrame()
     st.session_state["mode_demo"] = False
     return tables
-
 
 def preparer_operateurs(tables):
     df_emp = tables.get("employes",     pd.DataFrame()).copy()
@@ -608,6 +608,50 @@ def onglet_performance(tables):
                                margin=dict(t=40,b=0,l=0,r=0),
                                plot_bgcolor="white",paper_bgcolor="white")
             st.plotly_chart(fig2,use_container_width=True)
+
+
+# ── Ajout : détail individuel par opérateur ──────────
+    # à coller à la fin de la fonction de l'onglet 2 existant
+    st.markdown("---")
+    st.markdown("### 🎯 Détail individuel par opérateur")
+
+    df_hebdo = tables.get("performance_hebdo", pd.DataFrame())
+    df_mens  = tables.get("performance_mensuelle", pd.DataFrame())
+
+    if df_hebdo.empty:
+        st.info("Données hebdomadaires non disponibles pour le détail individuel.")
+    else:
+        operateurs = sorted(df_hebdo["nom_prenom"].dropna().unique())
+        choix = st.selectbox("Choisir un opérateur", operateurs, key="select_op_perf")
+
+        df_op = df_hebdo[df_hebdo["nom_prenom"] == choix].sort_values("semaine")
+        perf_row = df_mens[df_mens["nom_prenom"] == choix]
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            val = perf_row["performance_mensuelle_pct"].iloc[0] if not perf_row.empty else None
+            st.metric("Performance mensuelle", f"{val:.1f}%" if pd.notna(val) else "N/A")
+        with c2:
+            st.metric("Total pièces produites", f"{df_op['qty_reelle'].sum():.0f}")
+        with c3:
+            st.metric("Jours travaillés", f"{df_op['jours_travailles'].sum():.0f}")
+
+        df_plot = df_op.dropna(subset=["qty_objectif","qty_reelle"], how="all")
+        if not df_plot.empty:
+            fig = px.bar(
+                df_plot, x="semaine", y=["qty_objectif","qty_reelle"],
+                barmode="group", color_discrete_sequence=[SEWS_BLEU, SEWS_VERT],
+                title=f"Objectif vs Réel — {choix}",
+            )
+            fig.update_layout(height=300, plot_bgcolor="white", paper_bgcolor="white")
+            st.plotly_chart(fig, use_container_width=True)
+
+        st.dataframe(
+            df_op[["semaine","qty_objectif","qty_reelle","performance_pct",
+                   "jours_travailles","lundi","mardi","mercredi",
+                   "jeudi","vendredi","samedi","dimanche"]],
+            use_container_width=True, hide_index=True,
+        )
 
 
 # ═══════════════════════════════════════════════════════════

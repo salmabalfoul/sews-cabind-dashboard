@@ -21,7 +21,7 @@ FICHIERS = {
     "employes":    "Employee_retard_schedule.xlsx",
     "affectation": "Proto_team_affectation_dmx.xlsx",
     "temps_std":   "Temps_standard_PROTO.xlsx",
-    "planning":    "Planning_Proto_PB_DAYLI_MY27_.xlsx",
+    "planning":    "Planning_Proto_PB_DAYLI_MY27.xlsx",
     "anomalies":   "PMSA_5803203185_00_23AZ013.xlsx",
     "coupe":       "situation_de_la_coupe_wk24.xlsx",
     "manhours":    "Classeur3.xlsx",
@@ -85,65 +85,126 @@ def extraire_employes_retards():
     print(f"  ✓ {len(retards)} entrées de retard")
     return df_team, retards
 
-
 def extraire_affectations():
+    """
+    Remplace l'ancienne version (qui ne lisait que 8 colonnes / 1 semaine
+    partielle). Lit dynamiquement TOUS les blocs semaine du fichier
+    (Qty Objectif + 7 jours + Qty Réelle + Performance = 10 colonnes/semaine,
+    à partir de la colonne E) et calcule la performance mensuelle réelle
+    = somme(Qty Réelle) / somme(Qty Objectif) sur toutes les semaines.
+
+    Retourne 3 DataFrames :
+      - df_affectations      : 1 ligne par opérateur (zone, tps std, spn, perf mensuelle)
+      - df_performance_hebdo : 1 ligne par opérateur x semaine (détail jour par jour)
+      - df_performance_mens  : 1 ligne par opérateur (agrégats mensuels)
+    """
     print("\n── Extraction affectations ─────────────────────")
     fichier = trouver_fichier(FICHIERS["affectation"])
     if not fichier:
-        return None
+        return None, None, None
 
     df_aff = pd.read_excel(fichier, sheet_name="Feuil1", header=None)
-    rows = []
-    for i in range(6, min(37, df_aff.shape[0])):
-        row = df_aff.iloc[i, :8].tolist()
-        nom  = str(row[0]).replace('\xa0',' ').strip()
-        zone = str(row[1]).replace('\xa0',' ').strip()
-        tps  = row[2] if pd.notna(row[2]) else None
-        spn  = str(row[3]).strip() if pd.notna(row[3]) else ""
-        qty_obj  = row[4] if pd.notna(row[4]) else 0
-        qty_real = sum(int(row[j]) for j in [5,6,7] if pd.notna(row[j]))
-        if nom and nom not in ["nan",""]:
-            rows.append({
-                "nom_prenom":   nom,
-                "zone":         zone if zone != "nan" else "",
-                "tps_std_h":    float(tps) if tps else None,
-                "reference_spn":spn,
-                "qty_objectif": int(qty_obj) if pd.notna(qty_obj) else 0,
-                "qty_reelle":   qty_real,
-                "performance_pct": round(qty_real/float(qty_obj)*100,1)
-                               if qty_obj and float(qty_obj)>0 and qty_real>0 else 0.0,
-            })
-    df = pd.DataFrame(rows)
-    print(f"  ✓ {len(df)} affectations extraites")
-    return df
 
-
-def extraire_temps_standards():
-    print("\n── Extraction temps standards ──────────────────")
-    fichier = trouver_fichier(FICHIERS["temps_std"])
-    if not fichier:
-        return None
-
-    df_ts = pd.read_excel(fichier, sheet_name="Feuil 1", header=None)
-    projets = []
-    for i in range(7, 16):
-        if i >= df_ts.shape[0]:
+    # Localise dynamiquement la ligne d'en-tête (celle qui contient "SPN")
+    ligne_entete = None
+    for i in range(df_aff.shape[0]):
+        if (df_aff.iloc[i] == "SPN").any():
+            ligne_entete = i
             break
-        row = df_ts.iloc[i, :10].tolist()
-        projet = str(row[1]).strip() if pd.notna(row[1]) else ""
-        if projet and projet not in ["nan",""]:
-            projets.append({
-                "famille":          projet,
-                "tps_proto_h":      float(row[2]) if pd.notna(row[2]) else None,
-                "tps_coupe_h":      float(row[3]) if pd.notna(row[3]) else None,
-                "tps_sans_coupe_h": float(row[4]) if pd.notna(row[4]) else None,
-                "cadence_1op":      float(row[8]) if pd.notna(row[8]) else None,
-                "cadence_txt":      str(row[9]).strip() if pd.notna(row[9]) else "",
-            })
-    df = pd.DataFrame(projets)
-    print(f"  ✓ {len(df)} familles de faisceaux")
-    return df
+    if ligne_entete is None:
+        print("  ✗ Ligne d'en-tête introuvable")
+        return None, None, None
 
+    ligne_semaine = ligne_entete - 1
+    header_row  = df_aff.iloc[ligne_entete]
+    semaine_row = df_aff.iloc[ligne_semaine]
+
+    # Détecte tous les blocs "Qty Objectif" (1 par semaine), largeur 10 colonnes
+    blocs = []
+    col = 4
+    while col < df_aff.shape[1]:
+        if header_row[col] == "Qty Objectif":
+            label = str(semaine_row[col]).strip() if pd.notna(semaine_row[col]) else f"S{col}"
+            blocs.append((col, label))
+            col += 10
+        else:
+            col += 1
+        if col > 60:
+            break
+
+    JOURS = ["lundi","mardi","mercredi","jeudi","vendredi","samedi","dimanche"]
+    rows_statiques = []
+    rows_hebdo = []
+
+    for i in range(ligne_entete + 1, df_aff.shape[0]):
+        row = df_aff.iloc[i]
+        nom = row[0]
+        if pd.isna(nom) or not str(nom).strip():
+            continue
+        nom  = str(nom).replace('\xa0', ' ').strip()
+        zone = str(row[1]).replace('\xa0', ' ').strip() if pd.notna(row[1]) else ""
+        zone = zone if zone != "nan" else ""
+        tps  = float(row[2]) if pd.notna(row[2]) else None
+        spn  = str(row[3]).strip() if pd.notna(row[3]) else ""
+
+        rows_statiques.append({
+            "nom_prenom": nom, "zone": zone,
+            "tps_std_h": tps, "reference_spn": spn,
+        })
+
+        for col_obj, semaine in blocs:
+            qty_obj   = row[col_obj]      if pd.notna(row[col_obj])      else None
+            jours_qty = [row[col_obj+1+j] if pd.notna(row[col_obj+1+j]) else None for j in range(7)]
+            qty_reel  = row[col_obj+8]    if pd.notna(row[col_obj+8])    else None
+            perf_raw  = row[col_obj+9]    if pd.notna(row[col_obj+9])    else None
+
+            if qty_obj is None and qty_reel is None and all(j is None for j in jours_qty):
+                continue  # rien de renseigné cette semaine-là pour cet opérateur
+
+            jours_travailles = sum(1 for j in jours_qty if j not in (None, 0))
+            entree = {
+                "nom_prenom": nom, "zone": zone, "semaine": semaine,
+                "qty_objectif": qty_obj, "qty_reelle": qty_reel,
+                "performance_pct": round(perf_raw*100, 1) if isinstance(perf_raw, (int, float)) else None,
+                "jours_travailles": jours_travailles,
+            }
+            for j_nom, val in zip(JOURS, jours_qty):
+                entree[j_nom] = val
+            rows_hebdo.append(entree)
+
+    df_statique = pd.DataFrame(rows_statiques).drop_duplicates(subset=["nom_prenom"], keep="first")
+    df_hebdo    = pd.DataFrame(rows_hebdo)
+
+    if not df_hebdo.empty:
+        agg = df_hebdo.groupby(["nom_prenom","zone"]).agg(
+            qty_objectif_total=("qty_objectif","sum"),
+            qty_reelle_total=("qty_reelle","sum"),
+            jours_travailles_total=("jours_travailles","sum"),
+            nb_semaines=("semaine","nunique"),
+        ).reset_index()
+        agg["performance_mensuelle_pct"] = (
+            agg["qty_reelle_total"] / agg["qty_objectif_total"] * 100
+        ).round(1)
+    else:
+        agg = pd.DataFrame()
+
+    # Table "affectations" enrichie : remplace l'ancien calcul (buggé) par
+    # la vraie performance mensuelle agrégée sur toutes les semaines
+    df_affectations = df_statique.merge(
+        agg[["nom_prenom","qty_objectif_total","qty_reelle_total","performance_mensuelle_pct"]]
+        if not agg.empty else pd.DataFrame(columns=["nom_prenom"]),
+        on="nom_prenom", how="left"
+    ).rename(columns={
+        "qty_objectif_total": "qty_objectif",
+        "qty_reelle_total":   "qty_reelle",
+        "performance_mensuelle_pct": "performance_pct",
+    })
+    for c in ["qty_objectif","qty_reelle","performance_pct"]:
+        if c not in df_affectations.columns:
+            df_affectations[c] = None
+
+    print(f"  ✓ {len(df_affectations)} opérateurs | {len(df_hebdo)} lignes hebdo | {len(agg)} agrégats mensuels")
+    return df_affectations, df_hebdo, agg
 
 def extraire_coupe():
     print("\n── Extraction suivi de coupe ───────────────────")
@@ -274,6 +335,36 @@ def charger_sqlite(tables):
             print(f"  {t:<25} : {n:>5} lignes ✓")
 
 
+
+# ═══════════════════════════════════════════════════════════
+# EXTRACTION — TEMPS STANDARDS
+# ═══════════════════════════════════════════════════════════
+def extraire_temps_standards():
+    """
+    Extrait les temps standards depuis Temps_standard_PROTO.xlsx
+    """
+    print("\n── Extraction temps standards ──────────────────")
+    fichier = trouver_fichier("Temps_standard_PROTO.xlsx")
+    
+    if not fichier:
+        print("  ✗ Fichier Temps_standard_PROTO.xlsx introuvable")
+        return pd.DataFrame()
+    
+    try:
+        df_tps = pd.read_excel(fichier, sheet_name="Feuil 1", skiprows=6, header=0)
+        df_tps = df_tps.rename(columns={
+            df_tps.columns[0]: "projet",
+            df_tps.columns[1]: "temps_standard_h",
+            df_tps.columns[2]: "temps_coupe_h",
+            df_tps.columns[3]: "temps_sans_coupe_h",
+        })
+        df_tps = df_tps.dropna(subset=["projet"])
+        print(f"  ✓ {len(df_tps)} temps standards chargés")
+        return df_tps
+    except Exception as e:
+        print(f"  ⚠️ Erreur : {e}")
+        return pd.DataFrame()
+
 def main():
     print("="*55)
     print("  ETL Réel — SEWS Cabind")
@@ -283,7 +374,7 @@ def main():
     verifier_fichiers()
 
     df_emp, df_ret = extraire_employes_retards()
-    df_aff         = extraire_affectations()
+    df_aff, df_perf_hebdo, df_perf_mens = extraire_affectations()
     df_tps         = extraire_temps_standards()
     df_coupe, df_kx= extraire_coupe()
     df_mh          = extraire_manhours()
@@ -293,6 +384,8 @@ def main():
         "employes":       df_emp,
         "retards":        df_ret,
         "affectations":   df_aff,
+        "performance_hebdo":    df_perf_hebdo,
+        "performance_mensuelle":df_perf_mens,
         "temps_standards":df_tps,
         "suivi_coupe":    df_coupe,
         "ordres_komax":   df_kx,
