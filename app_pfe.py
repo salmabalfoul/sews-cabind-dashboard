@@ -29,6 +29,8 @@ SEWS_BLEU   = "#003DA5"
 SEWS_VERT   = "#00A651"
 SEWS_ORANGE = "#F7941D"
 SEWS_ROUGE  = "#ED1C24"
+SEWS_BLEU_LIGHT = "#0066CC"
+SEWS_GRIS_DARK  = "#555555"
 PFE_VIOLET  = "#7B2D8B"
 PFE_GRIS    = "#F0F2F6"
 
@@ -234,21 +236,54 @@ def preparer_operateurs(tables):
     df_emp = tables.get("employes",     pd.DataFrame()).copy()
     df_ret = tables.get("retards",      pd.DataFrame()).copy()
     df_aff = tables.get("affectations", pd.DataFrame()).copy()
-    if df_emp.empty:
+    if df_emp.empty or "nom_prenom" not in df_emp.columns:
         return pd.DataFrame()
+
     df_emp["nom_clean"] = df_emp["nom_prenom"].str.lower().str.strip()
-    df_ret["nom_clean"] = df_ret["nom_prenom"].str.lower().str.strip()
-    df_aff["nom_clean"] = df_aff["nom_prenom"].str.lower().str.strip()
-    df = df_emp.merge(
-        df_ret[["nom_clean","nb_jours_retard"]].drop_duplicates("nom_clean"),
-        on="nom_clean", how="left"
-    ).fillna({"nb_jours_retard": 0})
-    df = df.merge(
-        df_aff[["nom_clean","zone","reference_spn"]].drop_duplicates("nom_clean"),
-        on="nom_clean", how="left"
-    )
+
+    if df_ret.empty or "nom_prenom" not in df_ret.columns or "nb_jours_retard" not in df_ret.columns:
+        df = df_emp.copy()
+        df["nb_jours_retard"] = 0
+    else:
+        df_ret["nom_clean"] = df_ret["nom_prenom"].str.lower().str.strip()
+        df = df_emp.merge(
+            df_ret[["nom_clean","nb_jours_retard"]].drop_duplicates("nom_clean"),
+            on="nom_clean", how="left"
+        )
+        df["nb_jours_retard"] = df["nb_jours_retard"].fillna(0)
+
+    if df_aff.empty or "nom_prenom" not in df_aff.columns:
+        df["zone"] = "Non affecté"
+        df["reference_spn"] = None
+        df["tps_std_h"] = None
+    else:
+        df_aff["nom_clean"] = df_aff["nom_prenom"].str.lower().str.strip()
+        cols_dispo = [c for c in ["zone","reference_spn","tps_std_h"] if c in df_aff.columns]
+        df = df.merge(
+            df_aff[["nom_clean"] + cols_dispo].drop_duplicates("nom_clean"),
+            on="nom_clean", how="left"
+        )
+        if "zone" not in df.columns:
+            df["zone"] = "Non affecté"
+        if "reference_spn" not in df.columns:
+            df["reference_spn"] = None
+        if "tps_std_h" not in df.columns:
+            df["tps_std_h"] = None
+
     df["nb_jours_retard"] = df["nb_jours_retard"].astype(int)
     df["zone"] = df["zone"].fillna("Non affecté")
+    df["statut_retard"] = df["nb_jours_retard"].apply(
+        lambda n: "🟢 Ponctuel" if n == 0
+        else "🟡 Quelques retards" if n <= 3
+        else "🟠 Retards fréquents" if n <= 10
+        else "🔴 Retards critiques"
+    )
+    df["statut_code"] = df["nb_jours_retard"].apply(
+        lambda n: "Ponctuel" if n == 0
+        else "Quelques retards" if n <= 3
+        else "Retards fréquents" if n <= 10
+        else "Retards critiques"
+    )
     return df
  
 
@@ -353,25 +388,24 @@ def onglet_donnees_reelles(tables):
     <div class="section-card">
         <b>Contexte industriel :</b> SEWS Cabind Maroc fabrique des faisceaux de câbles
         automobiles prototypes pour le véhicule DAILY MY2027 (IVECO - Italie).
-        Ce module affiche les KPI calculés en temps réel depuis les données réelles
-        de l'équipe prototype (33 opérateurs, 4 familles de faisceaux).
+        Ce module affiche l'ensemble des KPI calculés en temps réel depuis les données
+        réelles de l'équipe prototype (33 opérateurs, 4 familles de faisceaux) — la même
+        vue que celle utilisée au quotidien par l'encadrant de l'atelier.
     </div>
     """, unsafe_allow_html=True)
 
-    df_op    = preparer_operateurs(tables)
-    df_coupe = tables.get("suivi_coupe",    pd.DataFrame())
-    df_anom  = tables.get("anomalies_pmsa", pd.DataFrame())
-    df_tps   = tables.get("temps_standards",pd.DataFrame())
-    df_mh    = tables.get("manhours_2025",  pd.DataFrame())
+    df_op_global = preparer_operateurs(tables)
+    df_coupe_g   = tables.get("suivi_coupe",    pd.DataFrame())
+    df_anom_g    = tables.get("anomalies_pmsa", pd.DataFrame())
 
-    # KPI globaux
+    # ── KPI globaux, toujours visibles en haut de l'onglet ──
     st.subheader("KPI Globaux")
-    if not df_op.empty:
-        total   = len(df_op)
-        ponct   = (df_op["nb_jours_retard"]==0).sum()
-        nb_ret  = (df_op["nb_jours_retard"]>0).sum()
-        nb_bloq = int((df_coupe["pct_coupe"]==0).sum()) if not df_coupe.empty else 0
-        nb_anom = len(df_anom) if not df_anom.empty else 0
+    if not df_op_global.empty:
+        total   = len(df_op_global)
+        ponct   = (df_op_global["nb_jours_retard"]==0).sum()
+        nb_ret  = (df_op_global["nb_jours_retard"]>0).sum()
+        nb_bloq = int((df_coupe_g["pct_coupe"]==0).sum()) if not df_coupe_g.empty else 0
+        nb_anom = len(df_anom_g) if not df_anom_g.empty else 0
 
         c1,c2,c3,c4,c5 = st.columns(5)
         c1.metric("👷 Opérateurs",      total)
@@ -380,19 +414,224 @@ def onglet_donnees_reelles(tables):
         c4.metric("🔴 Bloqués",         nb_bloq)
         c5.metric("📨 Anomalies IVECO", nb_anom)
 
-# ── Ajout : détail individuel par opérateur (identique à app_encadrant.py) ──
-    # à coller dans l'onglet "Données Réelles SEWS" de app_pfe.py
     st.markdown("---")
-    st.markdown("### 🎯 Performance individuelle par opérateur")
+
+    # ── Sous-onglets reprenant l'intégralité du dashboard encadrant ──
+    sous_tab1, sous_tab2, sous_tab3, sous_tab4 = st.tabs([
+        "👷 Opérateurs", "📊 Performance", "🔄 Coupe & Anomalies", "💰 Primes"
+    ])
+    with sous_tab1:
+        _reel_onglet_operateurs(tables)
+    with sous_tab2:
+        _reel_onglet_performance(tables)
+    with sous_tab3:
+        _reel_onglet_coupe(tables)
+    with sous_tab4:
+        _reel_onglet_primes(tables)
+
+
+# ── Sous-onglet Opérateurs (repris de app_encadrant.py) ──────
+def _reel_onglet_operateurs(tables):
+    df = preparer_operateurs(tables)
+    if df.empty:
+        st.error("Aucune donnée. Vérifiez les fichiers Excel.")
+        return
+
+    total  = len(df)
+    nb_p   = (df["nb_jours_retard"]==0).sum()
+    nb_r   = (df["nb_jours_retard"]>0).sum()
+    total_j= int(df["nb_jours_retard"].sum())
+
+    c1,c2,c3,c4 = st.columns(4)
+    c1.metric("👷 Total opérateurs",   str(total))
+    c2.metric("🟢 Ponctuels",          str(nb_p),   f"{nb_p/total*100:.0f}%")
+    c3.metric("🟠 Avec retards",       str(nb_r),   f"{nb_r} opérateurs")
+    c4.metric("📅 Total jours retard", str(total_j),"cumulé 2025")
+
+    st.markdown("---")
+    col1,col2 = st.columns(2)
+    with col1:
+        zones  = ["Toutes"] + sorted(df["zone"].dropna().unique().tolist())
+        zone_s = st.selectbox("🔍 Zone", zones, key="pfe_reel_zone")
+    with col2:
+        statuts= ["Tous","Ponctuel","Quelques retards",
+                  "Retards fréquents","Retards critiques"]
+        stat_s = st.selectbox("🚦 Statut", statuts, key="pfe_reel_statut")
+
+    df_f = df.copy()
+    if zone_s  != "Toutes": df_f = df_f[df_f["zone"]        == zone_s]
+    if stat_s  != "Tous":   df_f = df_f[df_f["statut_code"] == stat_s]
+
+    st.subheader(f"Liste des opérateurs ({len(df_f)})")
+    df_tab = df_f[["nom_prenom","zone","nb_jours_retard",
+                   "statut_retard","reference_spn"]].copy()
+    df_tab.columns = ["Opérateur","Zone","Jours retard","Statut","Faisceau"]
+    st.dataframe(df_tab.sort_values("Jours retard",ascending=False),
+                 use_container_width=True, hide_index=True, height=460)
+
+    st.markdown("---")
+    rz = df.groupby("zone")["nb_jours_retard"].sum().reset_index()
+    rz = rz[rz["nb_jours_retard"]>0].sort_values("nb_jours_retard",ascending=False)
+    if not rz.empty:
+        st.subheader("📊 Retards par zone")
+        fig = px.bar(rz, x="zone", y="nb_jours_retard",
+                     color="nb_jours_retard",
+                     color_continuous_scale=[SEWS_VERT,SEWS_ORANGE,SEWS_ROUGE],
+                     title="Jours de retard cumulés par zone",
+                     labels={"zone":"Zone","nb_jours_retard":"Jours"},
+                     text_auto=True)
+        fig.update_layout(height=300, coloraxis_showscale=False,
+                          margin=dict(t=40,b=0,l=0,r=0),
+                          plot_bgcolor="white", paper_bgcolor="white")
+        st.plotly_chart(fig, use_container_width=True)
+
+    df_sv = df[df["nb_jours_retard"]>0].sort_values(
+        "nb_jours_retard",ascending=False
+    )[["nom_prenom","zone","nb_jours_retard","statut_retard"]]
+    if not df_sv.empty:
+        st.subheader("⚠ Opérateurs à suivre")
+        df_sv.columns = ["Opérateur","Zone","Jours retard","Statut"]
+        st.dataframe(df_sv, use_container_width=True, hide_index=True)
+
+
+# ── Sous-onglet Performance (repris de app_encadrant.py) ─────
+def _reel_onglet_performance(tables):
+    df_op  = preparer_operateurs(tables)
+    df_aff = tables.get("affectations",   pd.DataFrame()).copy()
+    df_tps = tables.get("temps_standards",pd.DataFrame()).copy()
+    df_mh  = tables.get("manhours_2025",  pd.DataFrame()).copy()
+    if df_op.empty:
+        st.error("Données non disponibles.")
+        return
+
+    st.subheader("📋 Répartition par zone")
+    zone_fam = {"CABINA":"CABINA","Engine":"Engine",
+                "BRIGLIA UREA":"BRIGLIA UREA","COFANO":"COFANO","COFANO NDE":"COFANO"}
+    tps_d = dict(zip(df_tps["famille"],df_tps["tps_proto_h"])) if not df_tps.empty else {}
+    cad_d = dict(zip(df_tps["famille"],df_tps["cadence_txt"])) if not df_tps.empty else {}
+
+    zones_data = []
+    if not df_aff.empty and "zone" in df_aff.columns:
+        for zone, grp in df_aff.groupby("zone"):
+            fam = zone_fam.get(zone,"—")
+            tps = tps_d.get(fam)
+            zones_data.append({
+                "Zone":          zone,
+                "Nb opérateurs": len(grp),
+                "Temps standard":f"{tps:.2f}h/pièce" if tps else "variable",
+                "Cadence":       cad_d.get(fam,"variable") or "variable",
+                "Opérateurs":    ", ".join(grp["nom_prenom"].astype(str).tolist()),
+            })
+    df_zones = pd.DataFrame(zones_data)
+    if not df_zones.empty:
+        st.dataframe(df_zones, use_container_width=True,
+                     hide_index=True, height=380)
+
+        fig_pie = px.pie(df_zones, names="Zone", values="Nb opérateurs",
+                         title="Opérateurs par zone",
+                         color_discrete_sequence=[
+                             SEWS_BLEU,SEWS_BLEU_LIGHT,SEWS_VERT,SEWS_ORANGE,
+                             "#9DC3E6","#70AD47","#FF6B6B","#A5A5A5",
+                             "#FFC000","#4472C4","#ED7D31","#5A5A5A","#7030A0"],
+                         hole=0.38)
+        fig_pie.update_layout(height=340, margin=dict(t=50,b=0,l=0,r=0),
+                              paper_bgcolor="white")
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("🏆 Classement des opérateurs")
+    taux_zone = {
+        "BRIGLIA UREA":20,"Engine":16,"CABINA":14,
+        "COFANO":8,"COFANO NDE":8,"PREMONTAGE":18,
+        "CONTRÔLE ELECTRIQUE+PIN TO PIN":6,"CONTRÔLE FINAL":10,
+        "SERTISSAGE +épissurage":6,"PREPARATION GAINE":8,
+        "épissurage":8,"support PM":10,
+        "PREPARATION ET VALIDATION LES TABLES DE MONTAGE":10,
+    }
+    rows_cl = []
+    for _, row in df_op.iterrows():
+        zone = str(row.get("zone","")).strip()
+        tb   = taux_zone.get(zone,2)
+        nb_r = int(row["nb_jours_retard"])
+        if   nb_r>=10: taux=max(2,tb-14)
+        elif nb_r>=5:  taux=max(2,tb-8)
+        elif nb_r>=3:  taux=max(2,tb-4)
+        elif nb_r>=1:  taux=max(2,tb-2)
+        else:          taux=tb
+        rows_cl.append({
+            "Opérateur":row["nom_prenom"],"Zone":zone,
+            "Taux":taux,"Score":min(100,taux*5),"Retards":nb_r,
+        })
+    df_cl = pd.DataFrame(rows_cl).sort_values("Score",ascending=False)
+    df_cl.index = range(1,len(df_cl)+1)
+    medals = {1:"🥇",2:"🥈",3:"🥉"}
+    df_cl["Rang"]   = [medals.get(i,str(i)) for i in df_cl.index]
+    df_cl["Taux %"] = df_cl["Taux"].apply(lambda t:f"+{t}%")
+    df_cl["Score /100"] = df_cl["Score"]
+    st.dataframe(df_cl[["Rang","Opérateur","Zone","Taux %","Score /100","Retards"]],
+                 use_container_width=True, hide_index=True, height=460)
+
+    top20 = df_cl.head(20).reset_index(drop=True)
+    fig_cl = go.Figure(go.Bar(
+        x=top20["Score /100"], y=top20["Opérateur"], orientation="h",
+        marker_color=[SEWS_VERT if s>=80 else SEWS_ORANGE if s>=50 else SEWS_ROUGE
+                      for s in top20["Score /100"]],
+        text=top20["Score /100"].apply(lambda s:f"{s}/100"),
+        textposition="outside",
+    ))
+    fig_cl.add_vline(x=80,line_dash="dash",line_color=SEWS_BLEU,
+                     annotation_text="Objectif 80")
+    fig_cl.update_layout(
+        title="Score de performance (Top 20)",
+        xaxis=dict(range=[0,115],title="Score /100"),
+        yaxis=dict(autorange="reversed"),
+        height=560, margin=dict(t=50,b=0,l=0,r=60),
+        plot_bgcolor="white",paper_bgcolor="white",font_color=SEWS_BLEU)
+    st.plotly_chart(fig_cl, use_container_width=True)
+
+    if not df_mh.empty:
+        st.markdown("---")
+        st.subheader("📈 Manhours consommées 2025")
+        res = df_mh.groupby("sous_projet").agg(
+            qte=("quantite","sum"),mh=("manhours","sum")
+        ).reset_index()
+        res = res[res["mh"]>0]
+        tps_p = {r["sous_projet"]:r["tps_proto_h"]
+                 for _,r in df_mh.iterrows() if pd.notna(r.get("tps_proto_h"))}
+        res["mh_theo"] = res["qte"]*res["sous_projet"].map(tps_p).fillna(0)
+        res["eff_pct"] = np.where(res["mh"]>0,(res["mh_theo"]/res["mh"]*100).round(1),0)
+        c1,c2 = st.columns(2)
+        with c1:
+            fig1 = px.bar(res.sort_values("mh",ascending=False),
+                          x="sous_projet",y="mh",title="Manhours réelles par projet",
+                          color_discrete_sequence=[SEWS_BLEU],text_auto=".0f")
+            fig1.update_layout(height=320,showlegend=False,
+                               margin=dict(t=40,b=0,l=0,r=0),
+                               plot_bgcolor="white",paper_bgcolor="white")
+            st.plotly_chart(fig1,use_container_width=True)
+        with c2:
+            fig2 = px.bar(res[res["eff_pct"]>0].sort_values("eff_pct",ascending=False),
+                          x="sous_projet",y="eff_pct",color="eff_pct",
+                          color_continuous_scale=[SEWS_ROUGE,SEWS_ORANGE,SEWS_VERT],
+                          title="Efficacité MH (%)",text_auto=".1f")
+            fig2.add_hline(y=100,line_dash="dash",line_color=SEWS_BLEU)
+            fig2.update_layout(height=320,coloraxis_showscale=False,
+                               margin=dict(t=40,b=0,l=0,r=0),
+                               plot_bgcolor="white",paper_bgcolor="white")
+            st.plotly_chart(fig2,use_container_width=True)
+
+    # ── Détail individuel par opérateur (hebdo) ──
+    st.markdown("---")
+    st.markdown("### 🎯 Détail individuel par opérateur")
 
     df_hebdo = tables.get("performance_hebdo", pd.DataFrame())
     df_mens  = tables.get("performance_mensuelle", pd.DataFrame())
 
     if df_hebdo.empty:
-        st.info("Détail hebdomadaire non disponible.")
+        st.info("Données hebdomadaires non disponibles pour le détail individuel.")
     else:
         operateurs = sorted(df_hebdo["nom_prenom"].dropna().unique())
-        choix = st.selectbox("Opérateur", operateurs, key="select_op_perf_pfe")
+        choix = st.selectbox("Choisir un opérateur", operateurs, key="pfe_reel_select_op_perf")
 
         df_op_semaine = df_hebdo[df_hebdo["nom_prenom"] == choix].sort_values("semaine")
         perf_row = df_mens[df_mens["nom_prenom"] == choix]
@@ -410,9 +649,10 @@ def onglet_donnees_reelles(tables):
         if not df_plot.empty:
             fig = px.bar(
                 df_plot, x="semaine", y=["qty_objectif","qty_reelle"],
-                barmode="group", title=f"Objectif vs Réel — {choix}",
+                barmode="group", color_discrete_sequence=[SEWS_BLEU, SEWS_VERT],
+                title=f"Objectif vs Réel — {choix}",
             )
-            fig.update_layout(height=300)
+            fig.update_layout(height=300, plot_bgcolor="white", paper_bgcolor="white")
             st.plotly_chart(fig, use_container_width=True)
 
         st.dataframe(
@@ -422,130 +662,235 @@ def onglet_donnees_reelles(tables):
             use_container_width=True, hide_index=True,
         )
 
+
+# ── Sous-onglet Coupe & Anomalies (repris de app_encadrant.py) ──
+def _reel_onglet_coupe(tables):
+    df_coupe = tables.get("suivi_coupe",   pd.DataFrame()).copy()
+    df_kx    = tables.get("ordres_komax",  pd.DataFrame()).copy()
+    df_anom  = tables.get("anomalies_pmsa",pd.DataFrame()).copy()
+    if df_coupe.empty:
+        st.error("Données de coupe non disponibles.")
+        return
+
+    for _,r in df_coupe.iterrows():
+        if r["pct_coupe"]==0:
+            st.error(f"🚨 BLOQUÉ : {r['famille']} — {r['reference']} — 0% coupé — "
+                     f"Lancement : {r['indice_lancement']}")
+        elif r["pct_coupe"]<50:
+            st.warning(f"⚠ EN RETARD : {r['famille']} — {r['reference']} — "
+                       f"{r['pct_coupe']:.1f}%")
+
     st.markdown("---")
+    st.subheader("✂ Situation de la coupe")
+    labels   = [f"{r['famille']}\n{r['reference']}" for _,r in df_coupe.iterrows()]
+    couleurs = [SEWS_VERT if p>=80 else SEWS_ORANGE if p>0 else SEWS_ROUGE
+                for p in df_coupe["pct_coupe"]]
+    fig_c = go.Figure()
+    fig_c.add_trace(go.Bar(name="✅ Coupé",x=labels,y=df_coupe["coupe"],
+                           marker_color=couleurs,text=df_coupe["coupe"],
+                           textposition="inside",textfont=dict(color="white",size=14)))
+    fig_c.add_trace(go.Bar(name="⏳ Reste",x=labels,y=df_coupe["reste"],
+                           marker_color=["#E8E8E8"]*len(df_coupe),
+                           text=df_coupe["reste"],textposition="inside",
+                           textfont=dict(color="#555",size=13)))
+    for p,lbl in zip(df_coupe["pct_coupe"],labels):
+        fig_c.add_annotation(x=lbl,y=df_coupe["nb_reperes"].max()*1.06,
+                              text=f"<b>{p:.1f}%</b>",showarrow=False,
+                              font=dict(size=13,color=SEWS_BLEU))
+    fig_c.update_layout(barmode="stack",height=420,
+                        margin=dict(t=50,b=30,l=0,r=0),
+                        legend=dict(orientation="h",y=-0.15),
+                        plot_bgcolor="white",paper_bgcolor="white",
+                        font_color=SEWS_BLEU)
+    st.plotly_chart(fig_c,use_container_width=True)
 
-    # Suivi coupe
-    st.subheader("✂ Suivi de la Coupe MY2027 — WK24")
-    if not df_coupe.empty:
-        col_g, col_d = st.columns([3,2])
-        with col_g:
-            labels   = [f"{r['famille']}\n{r['reference']}"
-                        for _,r in df_coupe.iterrows()]
-            couleurs = [SEWS_VERT if p>=80 else SEWS_ORANGE if p>0 else SEWS_ROUGE
-                        for p in df_coupe["pct_coupe"]]
-            fig_c = go.Figure()
-            fig_c.add_trace(go.Bar(
-                name="✅ Coupé", x=labels, y=df_coupe["coupe"],
-                marker_color=couleurs,
-                text=df_coupe["coupe"], textposition="inside",
-                textfont=dict(color="white", size=13),
-            ))
-            fig_c.add_trace(go.Bar(
-                name="⏳ Reste", x=labels, y=df_coupe["reste"],
-                marker_color=["#E0E0E0"]*len(df_coupe),
-                text=df_coupe["reste"], textposition="inside",
-                textfont=dict(color="#666", size=12),
-            ))
-            for p,lbl in zip(df_coupe["pct_coupe"], labels):
-                fig_c.add_annotation(
-                    x=lbl, y=df_coupe["nb_reperes"].max()*1.08,
-                    text=f"<b>{p:.1f}%</b>", showarrow=False,
-                    font=dict(size=13, color=SEWS_BLEU)
-                )
-            fig_c.update_layout(
-                barmode="stack", height=360,
-                margin=dict(t=40,b=20,l=0,r=0),
-                legend=dict(orientation="h", y=-0.12),
-                plot_bgcolor="white", paper_bgcolor="white",
-            )
-            st.plotly_chart(fig_c, use_container_width=True)
+    df_c2 = df_coupe.copy()
+    df_c2["Statut"] = df_c2["pct_coupe"].apply(
+        lambda p:"🟢 OK" if p>=80 else "🟡 En cours" if p>=50
+        else "🟠 En retard" if p>0 else "🔴 BLOQUÉ")
+    st.dataframe(
+        df_c2[["famille","reference","nb_reperes","coupe","reste","pct_coupe",
+               "date_demande","date_reponse_prev","indice_lancement","Statut"
+               ]].rename(columns={
+            "famille":"Famille","reference":"Référence","nb_reperes":"Total",
+            "coupe":"Coupé","reste":"Reste","pct_coupe":"% Coupé",
+            "date_demande":"Demande","date_reponse_prev":"Réponse prévue",
+            "indice_lancement":"Lancement"}),
+        use_container_width=True, hide_index=True)
 
-        with col_d:
-            st.markdown("**Tableau de suivi**")
-            df_c2 = df_coupe.copy()
-            df_c2["Statut"] = df_c2["pct_coupe"].apply(
-                lambda p: "🟢 OK" if p>=80 else "🟡 En cours" if p>=50
-                else "🟠 En retard" if p>0 else "🔴 BLOQUÉ"
-            )
-            st.dataframe(
-                df_c2[["famille","coupe","reste","pct_coupe","Statut"]].rename(columns={
-                    "famille":"Famille","coupe":"Coupé",
-                    "reste":"Reste","pct_coupe":"% Coupé"
-                }),
-                use_container_width=True, hide_index=True, height=300
-            )
-            if not df_anom.empty:
-                st.warning(f"⚠ {len(df_anom)} anomalie(s) en attente — IVECO Italie")
-
-    # Manhours
-    if not df_mh.empty:
+    if not df_kx.empty:
         st.markdown("---")
-        st.subheader("📈 Efficacité Production — Manhours 2025")
-        res = df_mh.groupby("sous_projet").agg(
-            qte=("quantite","sum"), mh=("manhours","sum")
-        ).reset_index()
-        res = res[res["mh"]>0]
-        tps_p = {r["sous_projet"]:r["tps_proto_h"]
-                 for _,r in df_mh.iterrows() if pd.notna(r.get("tps_proto_h"))}
-        res["mh_theo"] = res["qte"] * res["sous_projet"].map(tps_p).fillna(0)
-        res["eff_pct"] = np.where(
-            res["mh"]>0, (res["mh_theo"]/res["mh"]*100).round(1), 0
-        )
-        fig_eff = px.bar(
-            res[res["eff_pct"]>0].sort_values("eff_pct", ascending=False),
-            x="sous_projet", y="eff_pct", color="eff_pct",
-            color_continuous_scale=[SEWS_ROUGE, SEWS_ORANGE, SEWS_VERT],
-            title="Efficacité des manhours par projet (%)",
-            labels={"eff_pct":"Efficacité (%)","sous_projet":"Projet"},
-            text_auto=".1f"
-        )
-        fig_eff.add_hline(y=100, line_dash="dash", line_color=SEWS_BLEU)
-        fig_eff.update_layout(height=320, coloraxis_showscale=False,
-                               margin=dict(t=50,b=0,l=0,r=0),
-                               plot_bgcolor="white", paper_bgcolor="white")
-        st.plotly_chart(fig_eff, use_container_width=True)
+        st.subheader("⚙ Ordres KOMAX")
+        c1,c2,c3 = st.columns(3)
+        c1.metric("Total ordres",len(df_kx))
+        c2.metric("Terminés",   int(df_kx["est_termine"].sum()),
+                  f"{df_kx['est_termine'].mean()*100:.0f}%")
+        c3.metric("Planifiés",  int(df_kx["est_locked"].sum()))
+        stats = df_kx["Description"].value_counts().reset_index()
+        stats.columns = ["Type","Nb"]
+        fig_kx = px.pie(stats,names="Type",values="Nb",
+                        title="Ordres par type",hole=0.4,
+                        color_discrete_sequence=[SEWS_BLEU,SEWS_BLEU_LIGHT,
+                                                  SEWS_VERT,SEWS_ORANGE])
+        fig_kx.update_layout(height=280,margin=dict(t=40,b=0,l=0,r=0),
+                              paper_bgcolor="white")
+        st.plotly_chart(fig_kx,use_container_width=True)
 
-    # Répartition zones
-    if not df_op.empty:
+    st.markdown("---")
+    st.subheader("⏱ Chronomètre des Anomalies — IVECO Italie")
+    if not df_anom.empty:
+        nb_req    = (df_anom["statut"]=="Request").sum()
+        nb_urgent = (df_anom["jours_attente"]>14).sum()
+        c1,c2,c3 = st.columns(3)
+        c1.metric("Total anomalies",len(df_anom))
+        c2.metric("En attente",      nb_req)
+        c3.metric("Urgentes (>14j)", nb_urgent,
+                  "⚠ Action requise" if nb_urgent>0 else "OK")
         st.markdown("---")
-        st.subheader("👷 Répartition de l'équipe prototype")
-        col1, col2 = st.columns(2)
-        zones = df_op.groupby("zone").size().reset_index(name="nb")
-        with col1:
-            fig_z = px.pie(
-                zones, names="zone", values="nb",
-                title="Opérateurs par zone", hole=0.4,
-                color_discrete_sequence=[
-                    SEWS_BLEU,"#0066CC",SEWS_VERT,SEWS_ORANGE,
-                    "#9DC3E6","#70AD47","#FF6B6B","#A5A5A5",
-                    "#FFC000","#4472C4","#ED7D31","#5A5A5A","#7030A0"
-                ]
-            )
-            fig_z.update_layout(height=320, margin=dict(t=50,b=0,l=0,r=0),
-                                 paper_bgcolor="white")
-            st.plotly_chart(fig_z, use_container_width=True)
-        with col2:
-            rz = df_op.groupby("zone")["nb_jours_retard"].sum().reset_index()
-            rz = rz[rz["nb_jours_retard"]>0].sort_values("nb_jours_retard", ascending=True)
-            if not rz.empty:
-                fig_rz = px.bar(
-                    rz, x="nb_jours_retard", y="zone", orientation="h",
-                    color="nb_jours_retard",
-                    color_continuous_scale=[SEWS_VERT, SEWS_ORANGE, SEWS_ROUGE],
-                    title="Jours de retard par zone",
-                    labels={"nb_jours_retard":"Jours","zone":"Zone"},
-                    text_auto=True
-                )
-                fig_rz.update_layout(height=320, coloraxis_showscale=False,
-                                      margin=dict(t=50,b=0,l=0,r=0),
-                                      plot_bgcolor="white", paper_bgcolor="white")
-                st.plotly_chart(fig_rz, use_container_width=True)
+        for i,(_,row) in enumerate(
+            df_anom.sort_values("jours_attente",ascending=False).iterrows()
+        ):
+            jours  = int(row.get("jours_attente",30))
+            draw   = str(row.get("drawing","?"))
+            statut = str(row.get("statut","Request"))
+            num    = int(row.get("numero",i+1))
+            if jours>30:
+                col,emoji,niv,bg = SEWS_ROUGE,"🔴","CRITIQUE — Action immédiate","#FFF5F5"
+            elif jours>14:
+                col,emoji,niv,bg = SEWS_ORANGE,"🟠","URGENT — Relance recommandée","#FFF8F0"
+            elif jours>7:
+                col,emoji,niv,bg = SEWS_ORANGE,"🟡","À surveiller","#FFFEF0"
+            else:
+                col,emoji,niv,bg = SEWS_VERT,"🟢","Dans les délais","#F0FFF4"
+
+            cc,ci = st.columns([1,3])
+            with cc:
+                st.markdown(f"""
+                <div style="background:{bg};border-radius:12px;padding:16px;
+                            text-align:center;border:2px solid {col};
+                            box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+                    <div style="font-size:11px;color:{SEWS_GRIS_DARK};">
+                        Anomalie N°{num}</div>
+                    <div style="font-size:48px;font-weight:900;
+                                color:{col};line-height:1;">{jours}</div>
+                    <div style="font-size:12px;color:{SEWS_GRIS_DARK};">
+                        jours d'attente</div>
+                    <div style="background:{col};color:white;border-radius:20px;
+                                padding:3px 10px;font-size:11px;font-weight:bold;
+                                display:inline-block;margin-top:6px;">
+                        {emoji} {statut}</div>
+                </div>""", unsafe_allow_html=True)
+            with ci:
+                st.markdown(f"""
+                <div style="background:{bg};border-radius:12px;padding:16px;
+                            border:2px solid {col};
+                            box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+                    <div style="font-weight:bold;color:{col};font-size:15px;
+                                margin-bottom:10px;">{emoji} {niv}</div>
+                    <div style="color:#333;font-size:13px;margin-bottom:6px;">
+                        <b>📄 Plan :</b> {draw}</div>
+                    <div style="color:#333;font-size:13px;margin-bottom:12px;">
+                        <b>⏳ Attente :</b> {jours} jours / max 45</div>
+                </div>""", unsafe_allow_html=True)
+                st.progress(min(jours/45,1.0),
+                    text=f"{jours} jours ({min(jours/45,1.0)*100:.0f}% du délai max)")
+            if i<len(df_anom)-1:
+                st.markdown("<hr style='margin:8px 0;opacity:0.3;'>",
+                            unsafe_allow_html=True)
+    else:
+        st.success("✅ Aucune anomalie enregistrée")
 
 
-# ═══════════════════════════════════════════════════════════
-# ONGLET 2 — MODÈLE ML
-# CORRECTION 2 : predire() intégrée dans ce fichier
-# ═══════════════════════════════════════════════════════════
+# ── Sous-onglet Primes (repris de app_encadrant.py) ───────────
+def _reel_onglet_primes(tables):
+    BAREME = {2:50,4:100,6:150,8:200,10:250,
+              12:300,14:350,16:400,18:450,20:500}
+    df_op = preparer_operateurs(tables)
+    if df_op.empty:
+        st.error("Données non disponibles.")
+        return
+
+    with st.expander("📋 Barème officiel SEWS Cabind"):
+        b_df = pd.DataFrame([{
+            "Taux":f"+{k}%",
+            "Prime Prod.":f"{v//2} MAD","Prime Qual.":f"{v//2} MAD",
+            "Total":f"{v} MAD","+ Bonus 0 abs.":f"{round(v*1.2)} MAD"
+        } for k,v in BAREME.items()])
+        st.dataframe(b_df,hide_index=True,use_container_width=True)
+
+    st.markdown("---")
+    taux_zone = {
+        "BRIGLIA UREA":20,"Engine":16,"CABINA":14,
+        "COFANO":8,"COFANO NDE":8,"PREMONTAGE":18,
+        "CONTRÔLE ELECTRIQUE+PIN TO PIN":6,"CONTRÔLE FINAL":10,
+        "SERTISSAGE +épissurage":6,"PREPARATION GAINE":8,
+        "épissurage":8,"support PM":10,
+        "PREPARATION ET VALIDATION LES TABLES DE MONTAGE":10,
+    }
+    rows = []
+    for _,emp in df_op.iterrows():
+        zone=str(emp.get("zone","")).strip()
+        tb=taux_zone.get(zone,2)
+        nb_r=int(emp["nb_jours_retard"])
+        if   nb_r>=10: taux=max(2,tb-14)
+        elif nb_r>=5:  taux=max(2,tb-8)
+        elif nb_r>=3:  taux=max(2,tb-4)
+        elif nb_r>=1:  taux=max(2,tb-2)
+        else:          taux=tb
+        pb=0
+        for s in sorted(BAREME.keys(),reverse=True):
+            if taux>=s: pb=BAREME[s]; break
+        bonus=round(pb*0.20) if nb_r==0 and pb>0 else 0
+        total=pb+bonus
+        rows.append({
+            "Opérateur":emp["nom_prenom"],"Zone":zone,"Taux":taux,
+            "Taux %":f"+{taux}%","Prime Productivité":pb//2,
+            "Prime Qualité":pb//2,"Bonus assiduité":bonus,
+            "TOTAL MAD":total,"Nb retards":nb_r,
+        })
+    df_pr = pd.DataFrame(rows).sort_values("TOTAL MAD",ascending=False)
+    total_p = df_pr["TOTAL MAD"].sum()
+
+    c1,c2,c3,c4 = st.columns(4)
+    c1.metric("💰 Total à payer",f"{total_p:,} MAD")
+    c2.metric("🏆 Prime max",
+              f"{df_pr['TOTAL MAD'].max()} MAD",
+              df_pr.loc[df_pr['TOTAL MAD'].idxmax(),'Opérateur'].split()[0])
+    c3.metric("📊 Prime moyenne",f"{df_pr['TOTAL MAD'].mean():.0f} MAD")
+    c4.metric("✅ Bénéficiaires",f"{(df_pr['TOTAL MAD']>0).sum()}/{len(df_pr)}")
+
+    st.markdown("---")
+    df_a = df_pr[["Opérateur","Zone","Taux %","Prime Productivité",
+                  "Prime Qualité","Bonus assiduité","TOTAL MAD","Nb retards"]].copy()
+    df_a.columns = ["Opérateur","Zone","Taux","Prime Prod.","Prime Qual.",
+                     "Bonus","TOTAL MAD","Retards"]
+    st.dataframe(df_a,use_container_width=True,hide_index=True,height=500)
+
+    top15 = df_pr.head(15)
+    fig_p = go.Figure(go.Bar(
+        x=top15["Opérateur"],y=top15["TOTAL MAD"],
+        marker_color=[SEWS_VERT if v>=400 else SEWS_ORANGE if v>=200
+                      else SEWS_BLEU_LIGHT for v in top15["TOTAL MAD"]],
+        text=top15["TOTAL MAD"].apply(lambda v:f"{v} MAD"),
+        textposition="outside"))
+    fig_p.update_layout(title="Top 15 primes",yaxis_title="MAD",
+                        height=380,margin=dict(t=50,b=80,l=0,r=0),
+                        xaxis_tickangle=-40,plot_bgcolor="white",
+                        paper_bgcolor="white",font_color=SEWS_BLEU)
+    st.plotly_chart(fig_p,use_container_width=True)
+
+    st.markdown("---")
+    output = BytesIO()
+    with pd.ExcelWriter(output,engine="openpyxl") as writer:
+        df_a.to_excel(writer,index=False,sheet_name="Primes du mois")
+    output.seek(0)
+    st.download_button("⬇ Télécharger les primes (Excel)",data=output,
+                       file_name="primes_sews_cabind.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                       key="pfe_reel_export_primes")
+
+
+
 def onglet_ml():
     st.header("🤖 Modèle ML — Prédiction des Défauts")
 
